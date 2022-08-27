@@ -1,0 +1,924 @@
+---
+title: "Análisis inteligente de datos - Trabajo práctico 2"
+subtitle: "Especialización en Explotación de datos y Descubrimiento del conocimiento"
+author: "María Florencia Boemo Bravo"
+output: 
+  html_document: 
+    theme: cosmo
+date: '`r Sys.Date()`'
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introducción
+
+En el presente trabajo, se analizará una base de datos de atributos de calidad para un conjunto de vinos portugueses, provista por los docentes de la materia. La base de datos es de libre acceso, y puede descargarse de Internet. El propósito es realizar un análisis multivariado, aplicando las herramientas de exploración y clasificación estudiadas en la materia.
+
+## Muestreo y análisis exploratorio de datos
+
+En primer lugar, se tomó una muestra aleatoria de la base de datos. Dicha muestra debía estar balanceada en cantidad de vinos blancos y tintos considerados. Para garantizar un muestreo aleatorio reproducible, se utilizó como semilla 857. 
+
+```{r tp2 aid, message= FALSE, echo=FALSE}
+
+r = getOption("repos")
+r["CRAN"] = "http://cran.us.r-project.org"
+options(repos = r)
+```
+
+```{r cargar paquetes, message=FALSE, echo=FALSE, include=FALSE}
+#install.packages('readxl')
+#install.packages('GGally')
+#install.packages("dplyr")
+#install.packages('kableExtra')
+#install.packages('ggplot')
+#install.packages('factoextra')
+#install.packages('corrplot')
+#install.packages('ggfortify')
+#install.packages('cowplot')
+#install.packages('rsample')
+#install.packages('goft')
+#install.packages('biotools')
+#import.packages('vegan')
+#install.packages('Hotelling')
+#install.packages('nmpv')
+#install.packages('dendextend')
+```
+
+```{r cargar base 2, message=FALSE}
+#cargar la base de datos
+library(readxl)
+DatosTP1 <- read_excel("C:/Users/flore/Desktop/DatosTP1.xlsx")
+View(DatosTP1)
+
+#realizar muestreo balanceado
+library(dplyr)
+set.seed(857)
+muestra <- slice_sample(group_by(DatosTP1, variedad),n = 1000)
+table(muestra$variedad) #chequeo que haya 1000 y 1000
+```
+
+Previo al inicio, se realizó un análisis exploratorio de datos, graficando las variables continuas de a pares
+
+```{r exploración, message=FALSE, echo=FALSE, fig.height=7, fig.width=9}
+library(GGally)
+muestra$variedad <- as.factor(muestra$variedad)
+pares <- ggpairs(muestra, columns=1:11,aes(color=variedad, alpha=0.5),upper = list(continuous = wrap("cor", size = 2.5)))
+pares <- pares +scale_fill_manual(values = c('#FF9966','#FF6666')) + scale_color_manual(values = c('#FF9966','#CC6666'))
+pares
+```
+
+A simple vista, se pueden detectar severas desviaciones de la normalidad univariada, por lo que sería esperable que la muestra no cumpla con la normalidad multivariada.
+
+## Análisis de componentes principales (punto 1)
+
+En primer lugar, se realizó el análisis de componentes principales para la muestra seleccionada. Dicho análisis permite reducir la dimensionalidad del problema utilizando nuevas variables que son combinaciones lineales de las originales, de manera tal que la pérdida de información en el proceso sea mínima. La muestra original presenta trece variables, de las cuales doce son numéricas, relativas a atributos de calidad del vino, y una, la variedad, es categórica. Se espera que, luego de aplicar el algoritmo de PCA, el número de variables relevantes disminuya.\
+Para el cálculo de las componentes principales, se dejó afuera la variedad del vino, ya que no es una variable numérica. Asimismo, como todas las variables numéricas están en distintas escalas, se estandarizaron, a fin de obtener resultados representativos.\
+
+```{r componentes principales, include=TRUE}
+muestra$variedad <- as.factor(muestra$variedad)
+pca<-prcomp(muestra[1:12], scale=TRUE)
+summary(pca)
+```
+
+Las cargas de cada componente (_loadings_) están incluidas en el parámetro _rotation_ del análisis de componentes principales, y se muestran en la siguiente tabla.
+
+```{r loadings, include=TRUE, message=FALSE}
+tabla_loadings <- round(pca$rotation, 2)
+library(kableExtra)
+tabla_loadings %>% #código de formato de tabla
+  kbl()%>%
+  kable_styling()
+```
+
+Para obtener los autovalores correspondientes a cada componente, se elevó al cuadrado el valor de desvío estándar obtenido.
+
+```{r autovalores, include=TRUE}
+pca$sdev^2
+```
+
+Finalmente, considerando que el objetivo de este análisis es reducir la dimensionalidad del problema, se aplicaron diferentes criterios para elegir el número adecuado de componentes principales a tener en cuenta.\
+En primer lugar, podrían retenerse las componentes principales que expliquen un dado porcentaje de variabilidad. Para este análisis, se retuvieron aquellas variables que expliquen un 90% de variabilidad. De acuerdo a lo calculado anteriormente, esto implicaría quedarse con las ocho primeras componentes principales, que acumulan aproximadamente el 93% de la varianza.\
+Otro criterio posible para la selección es el criterio de Kaiser modificado, que indica que deben conservarse aquellas componentes cuyo autovalor sea mayor a 0.7. Gráficamente, 
+
+```{r grafico autovalores, echo=FALSE}
+varianza<-(pca$sdev)^2
+library(ggplot2)
+theme_set(theme_bw(12))
+scree <- qplot(c(1:12), varianza, color=I('#FF9966')) + 
+  geom_line(color='#FF9966') + 
+  geom_hline(yintercept = 0.7, color='#FF6666') +
+  xlab("Componente principal") + 
+  ylab("Varianza") +
+  ylim(0, 3.5)
+scree
+```
+
+De acuerdo al gráfico, deberían conservarse únicamente las cinco primeras componentes principales. En ese caso, se estaría explicando casi un 80% de la variabilidad.\
+Finalmente, puede determinarse el número de variables relevantes mediante el criterio del bastón roto. Esto es, se realizó un _scree plot_ y se observó de manera gráfica dónde se ameseta el porcentaje de varianza explicada por cada componente.
+
+```{r baston roto, echo=FALSE, message=FALSE}
+library(factoextra)
+fviz_eig(pca, ncp =12, geom =c('bar', 'line'), barcolor=I('#FFCC99'), barfill=I('#FFCC99'), linecolor=I('#FF6666'), addlabels = TRUE, main="")
+```
+
+Se puede apreciar una meseta que inicia en la séptima componente. Por lo tanto, de acuerdo a este último criterio, deberían conservarse las primeras seis componentes para el análisis. Dichas componentes explican casi un 85% de variabilidad.\
+Dado que los criterios de Kaiser modificado y del bastón roto arrojan resultados similares, se hizo el análisis de correlación entre las componentes principales y las variables originales para las cinco primeras componentes. Para ello, se realizó un correlograma.
+
+```{r corrplot, echo=FALSE, message=FALSE}
+library(corrplot)
+contrib <- as.matrix(round(pca$rotation,2))
+corrplot(contrib,is.corr=FALSE)
+```
+
+Es posible observar una correlación fuerte y negativa entre la componente principal 1 y la cantidad de anhidrido sulfuroso total, y lo mismo sucede con el anhidrido sulfuroso libre. La correlación también es grande, pero positiva, para la acidez volátil. La componente principal 2 correlaciona muy bien con la densidad del vino, también negativamente. A la vez, se observó una correlación positiva con el contenido de alcohol para esta componente. Por otra parte, la componente principal 3 presenta una correlación positiva con el contenido de ácido cítrico. La componente principal 4 está fuertemente ligada al contenido de sulfatos del vino, de manera positiva. La componente principal 5 correlaciona principalmente con el contenido de cloruros, pero también tiene una alta contribución de las variables azúcar residual, densidad y calidad.\
+Finalmente, para completar el análisis, se realizó un biplot entre las componentes PC1 y PC2.
+
+```{r biplot, echo=FALSE}
+library(ggfortify)
+biplot <- autoplot(pca, 
+         data = muestra, 
+         colour = 'variedad',
+         loadings = TRUE, 
+         loadings.colour = 'black',
+         loadings.label = TRUE, 
+         loadings.label.size = 3)
+biplot <- biplot +scale_fill_manual(values = c('#FF9966','#FF6666')) + scale_color_manual(values = c('#FF9966','#CC6666'))  
+biplot
+```
+
+En el biplot, se puede ver que las variables anhidrido sulfuroso total y densidad son aproximadamente ortogonales, con lo que podría afirmarse que no están correlacionadas. La contribución de la variable anhidrido sulfuroso total es máxima para la primer componente principal, mientras que la densidad aporta en su mayoría a la segunda componente principal. Estas observaciones verifican lo encontrado al analizar las cargas de las componentes principales y el correlograma. Es interesante destacar que las variables anhidrido sulfuroso total y anhidrido sulfuroso libre están estrechamente ligadas, ya que el ángulo entre ambos vectores en el biplot es muy pequeño. Asimismo, los vectores correspondientes a las variables anhidrido sulfuroso total y acidez volátil tienen una dirección similar, y sentidos opuestos. Por lo tanto, podría pensarse que estas variables están correlacionadas negativamente.\
+Al colorear las observaciones en el biplot de acuerdo a la variedad de vino, se detectan dos aglomeraciones de datos bien diferenciadas, con escasa superposición entre ellas. Esto podría ser útil en el caso de adquirir nuevos datos, ya que podrían aplicarse las transformaciones indicadas en las componentes principales, y ver en qué zona del gráfico se ubican. De esta manera, podría esbozarse una clasificación preliminar de los vinos.\
+Se sabe, luego del primer trabajo práctico, que existen valores atípicos dentro de la base de datos. Por lo tanto, se decidió realizar un análisis de PCA robusto, para ver si la proporción de variabilidad explicada por las primeras componentes aumenta.
+
+```{r pca robusto, message=FALSE}
+#usando MCD
+pca_mcd <-princomp(muestra[1:12], cor=TRUE, scores=TRUE,
+covmat=MASS::cov.mcd(muestra[1:12]))
+summary(pca_mcd)
+#usando MVE
+pca_mve <-princomp(muestra[1:12], cor=TRUE, scores=TRUE,
+covmat=MASS::cov.mve(muestra[1:12]))
+summary(pca_mve)
+```
+
+Gráficamente,
+
+```{r grafico autovalores robusto, message=FALSE,echo=FALSE, warning=FALSE, fig.height=7, fig.width=9}
+varianza_mcd<-(pca_mcd$sdev)^2
+library(ggplot2)
+theme_set(theme_bw(12))
+scree_mcd <- qplot(c(1:12), varianza_mcd, color=I('#FF9966')) + 
+  geom_line(color='#FF9966') + 
+  geom_hline(yintercept = 0.7, color='#FF6666') +
+  xlab("Componente principal (MCD)") + 
+  ylab("Varianza") +
+  ylim(0, 3.5)
+
+eig_mcd <- fviz_eig(pca_mcd, ncp =12, geom =c('bar', 'line'), barcolor=I('#FFCC99'), barfill=I('#FFCC99'), linecolor=I('#FF6666'), addlabels = TRUE, main="")
+
+varianza_mve<-(pca_mve$sdev)^2
+library(ggplot2)
+theme_set(theme_bw(12))
+scree_mve <- qplot(c(1:12), varianza_mve, color=I('#FF9966')) + 
+  geom_line(color='#FF9966') + 
+  geom_hline(yintercept = 0.7, color='#FF6666') +
+  xlab("Componente principal (MVE)") + 
+  ylab("Varianza") +
+  ylim(0, 3.5)
+
+eig_mve <- fviz_eig(pca_mve, ncp =12, geom =c('bar', 'line'), barcolor=I('#FFCC99'), barfill=I('#FFCC99'), linecolor=I('#FF6666'), addlabels = TRUE, main="")
+
+library(cowplot)
+plot_grid(scree_mcd, eig_mcd, scree_mve, eig_mve, ncol=2)
+```
+
+Aplicando el criterio de Kaiser modificado para determinar el número de componentes principales relevantes, se decidieron conservar las cuatro primeras. Esto representa una reducción de la dimensionalidad aún mayor respecto del modelo no robusto.\
+El biplot para este nuevo análisis de PCA, considerando el elipsoide de volumen mínimo (MVE), es
+
+```{r biplot mcd, echo=FALSE}
+library(ggfortify)
+biplot_mve <- autoplot(pca_mve, 
+         data = muestra, 
+         colour = 'variedad',
+         loadings = TRUE, 
+         loadings.colour = 'black',
+         loadings.label = TRUE, 
+         loadings.label.size = 3)
+biplot_mve <- biplot_mve +scale_fill_manual(values = c('#FF9966','#FF6666')) + scale_color_manual(values = c('#FF9966','#CC6666')) 
+biplot_mve
+```
+
+Nuevamente, se observa una cierta separación entre las distintas variedades de vino, por lo que las componentes principales robustas podrían servir como un método preliminar de clasificación. Comparando ambos biplots, se puede ver que, para las componentes robustas, la variable ácido cítrico es colineal con las variables anhidrido sulfuroso libre y total. Las variables calidad y contenido de alcohol están más fuertemente correlacionadas (ángulo entre ellas más pequeño). Lo mismo sucede con sulfatos y pH. Por lo tanto, si bien en este caso utilizar métodos robustos no incrementa sensiblemente el porcentaje de variabilidad explicado, permite inferir relaciones entre variables que de otra manera estarían enmascaradas.
+
+## Análisis discriminante (punto 2)
+
+En esta parte del trabajo, se aplicó un modelo de clasificación supervisada para la variedad de vino, a fin de encontrar una función que permita la separación de las observaciones en dos grupos: tintos y blancos. En primer lugar, se utilizó el método de análisis discriminante lineal.\
+Previo a la clasificación, se separó el conjunto de datos en entrenamiento y prueba. El primer conjunto permite construir la regla de clasificación, y el segundo validarla. Se conservaron el 70% de los datos para generar la regla.\
+
+```{r train test split, message=FALSE}
+muestra$variedad <- as.factor(muestra$variedad)
+library(rsample)
+set.seed(857)
+muestra_split <- initial_split(muestra, prop = 0.7, strata = variedad)
+
+muestra_train <- muestra_split %>%
+  training()
+
+muestra_test <- muestra_split %>%
+  testing()
+```
+
+La cantidad de datos en cada tabla es
+
+```{r cantidad train test, message=FALSE}
+cant_train <- nrow(muestra_train)
+paste('Cantidad de datos en conjunto entrenamiento: ', cant_train)
+cant_test <- nrow(muestra_test)
+paste('Cantidad de datos en conjunto prueba: ', cant_test)
+```
+
+El análisis discriminante lineal se basa en tres supuestos: independencia de las observaciones, normalidad multivariada y homoscedasticidad. Asimismo, la clasificación sólo tiene sentido si los vectores medios de ambos grupos difieren significativamente.
+El supuesto de independencia se asumió válido por diseño del experimento. Para verificar normalidad multivariada de cada clase, se realizó un test de Shapiro-Wilk multivariado. El nivel de significación del test es de 0.05\
+
+```{r normal multivariado, include=TRUE, message=FALSE}
+library(goft)
+blancos_train <- as.matrix(subset(muestra_train[,1:12], muestra_train$variedad==1))
+tintos_train <- as.matrix(subset(muestra_train[,1:12], muestra_train$variedad==2))
+
+#test de normalidad para vinos blancos
+mvshapiro_test(as.matrix(blancos_train)) 
+#test de normalidad para vinos tintos
+mvshapiro_test(as.matrix(tintos_train))
+```
+
+A un nivel 0.05, se rechaza la hipótesis de normalidad multivariada para ambas poblaciones. Esto estuvo de acuerdo con las observaciones realizadas durante el análisis exploratorio de los datos. De todas maneras, se verificó la hipótesis de homoscedasticidad para ambas poblaciones, a fin de evaluar mejor la aplicabilidad del método de análisis discriminante lineal. Para ello, se utilizó el test M de Box de homogeneidad de covarianzas. Como este test es extremadamente sensible, se le asignó un nivel de significación de 0.001. Es importante destacar que los resultados de este test no serán del todo confiables, ya que los datos no cumplen la hipótesis de normalidad multivariada.\
+
+```{r homoscedasticidad multivariado, message=FALSE}
+library(biotools)
+muestra_train$variedad <- as.numeric(muestra_train$variedad)
+muestra_train <- as.matrix(muestra_train) 
+
+#test M de Box
+boxM(muestra_train[,-13], muestra_train[,13])
+```
+
+A fin de confirmar los resultados del test M de Box, se realizó un test de Levene multivariado, que es independiente de la distribución de los datos.
+
+```{r homoscedasticidad multivariado levene, message=FALSE}
+library(vegan)
+matriz_de_distancias <- vegan::betadisper(dist(muestra_train[,-13], method='euclidean'), muestra_train[,13], type = c("median","centroid"), bias.adjust = T,sqrt.dist = FALSE, add = FALSE)
+TukeyHSD(matriz_de_distancias)
+```
+
+Los resultados del test no paramétrico confirman los hallazgos anteriores, esto es, no se cumple el supuesto de homogeneidad de varianzas. Luego, se verificó igualdad del vector de medias, utilizando el test de Hotelling. Este último test requiere que las muestras tengan una distribución normal multivariada, por lo que sus resultados no serán del todo confiables en este contexto particular.
+
+```{r hotelling, message=FALSE}
+library(Hotelling)
+fit <- hotelling.test(blancos_train, tintos_train, var.equal=FALSE)
+fit
+```
+
+Una comparación de vectores de medias no paramétrica arrojó los siguientes resultados.
+
+```{r medias no param, message=FALSE, warning=FALSE}
+muestra_train <- as.data.frame(muestra_train)
+library(npmv)
+
+#test no parametrico de medias
+noparam <- nonpartest(`acidez fija`|`acidez volátil`|`ácido cítrico`|`azúcar residual`|cloruros|`anhídrido sulfuroso libre`|`anhídrido sulfuroso total`|densidad|pH|sulfatos|alcohol|calidad ~ variedad, data = muestra_train, permreps = 1000, plots=F) 
+noparam
+```
+
+En resumen, el conjunto de datos no cumple normalidad multivariada ni homogeneidad de varianzas, aunque los vectores de medias de ambos grupos son significativamente distintos. Por lo tanto, no sería a priori una buena alternativa aplicar un análisis discriminante lineal. De todas maneras, se llevó a cabo esta técnica, aunque los resultados podrían no ser confiables.\
+Previo a los cálculos, se estandarizaron las variables, ya que todas están en escalas de medida diferentes, y eso podría influenciar la clasificación. Se utilizó únicamente información del conjunto de entrenamiento para la estandarización, para evitar _data leakage_.
+
+```{r scale, message=FALSE, eval=TRUE, results='hide'}
+#escalado de conjunto de prueba
+for (k in 1:12){muestra_test[,k]=(muestra_test[,k]-mean(muestra_train[,k]))/sd(muestra_train[,k])}
+
+#escalado de conjunto de entrenamiento
+muestra_train[,-13] <- scale(muestra_train[,-13], center = TRUE, scale = TRUE)
+```
+
+El análisis discriminante lineal se realizó según el siguiente código.
+
+```{r lda, message=FALSE}
+library(MASS)
+muestra_train <- as.data.frame(muestra_train)
+model_lda <- lda(variedad~., data=muestra_train)
+model_lda
+```
+
+Como hay dos clases posibles, se obtiene una única función que las separa. Luego, se realizó la predicción, utilizando el conjunto de prueba separado anteriormente. Por una cuestión de simplicidad, no se presentan los resultados, aunque se deja el código explicitado.\
+Se calculó la matriz de confusíón y la precisión de la predicción.
+
+```{r matriz confusion test, message=FALSE}
+muestra_test <- as.data.frame(muestra_test)
+
+#predicción en conjunto de prueba
+lda.test <- predict(model_lda,muestra_test)
+
+muestra_test$lda <- lda.test$class #se agrega LDA a dataframe para construir matriz de confusión
+
+#matriz de confusion, conjunto prueba
+matriz_confusion_test <- table(muestra_test$lda,muestra_test$variedad)
+#exactitud del modelo
+accuracy_lda <- sum(diag(matriz_confusion_test))/sum(matriz_confusion_test)
+paste('Precisión LDA: ', round(accuracy_lda,3))
+```
+
+```{r matriz confusion grafico, message=FALSE, echo=FALSE}
+matriz_confusion_test_2 <- as.data.frame(matriz_confusion_test)
+conf_lda <- ggplot(data =  matriz_confusion_test_2, aes(x=Var1, y=Var2, fill=factor(Freq))) +
+  geom_tile() + theme_bw() + coord_equal() +
+  scale_fill_manual(values = c('#FF9966','#FF6666','#660000', '#CC6600')) +
+  guides(fill="none") + # removing legend for `fill`
+  labs(title = "Matriz de confusión LDA", y='Prediccion', x='Valores reales') +
+  geom_text(aes(label=Freq), color="white")
+conf_lda
+```
+
+Tal como se observa en la matriz de confusión, el análisis discriminante lineal clasifica relativamente bien los vinos, a pesar de que no se cumplen los supuestos estadísticos necesarios. Es importante destacar que los resultados no son del todo confiables.\
+Con fines de comparación, se realizó un análisis discriminante cuadrático, que relaja el supuesto de homoscedasticidad. Sin embargo, es importante destacar que el supuesto de normalidad sigue siendo inválido, por lo que la confiabilidad de los resultados es dudosa.
+
+```{r qda, message=FALSE}
+model_qda <- qda(variedad~., data=muestra_train)
+model_qda
+```
+
+Nuevamente, se calcularon las predicciones para este modelo. No se muestran los resultados, por una cuestión de simplicidad, pero se deja explicitado el código.\
+La matriz de confusión y la precisión del modelo de análisis discriminante cuadrático se muestra a continuación.
+
+```{r matriz confusion qda, message=FALSE}
+#predicción en conjunto de prueba
+qda.test <- predict(model_qda,muestra_test)
+
+muestra_test$qda <- qda.test$class #se agrega QDA a dataframe para construir matriz de confusión
+
+#matriz de confusión, conjunto de prueba
+matriz_confusion_test_qda <- table(muestra_test$qda,muestra_test$variedad)
+#exactitud del modelo
+accuracy_qda <- sum(diag(matriz_confusion_test_qda))/sum(matriz_confusion_test_qda)
+paste('Precisión QDA: ', round(accuracy_qda,3))
+```
+
+```{r matriz confusion qda grafico, message=FALSE, echo=FALSE}
+matriz_confusion_test_qda_2 <- as.data.frame(matriz_confusion_test_qda)
+conf_qda <- ggplot(data =  matriz_confusion_test_qda_2, aes(x=Var1, y=Var2, fill=factor(Freq))) +
+  geom_tile() + theme_bw() + coord_equal() +
+  scale_fill_manual(values = c('#FF9966','#FF6666','#660000', '#CC6600')) +
+  guides(fill="none") + # removing legend for `fill`
+  labs(title = "Matriz de confusión QDA", y='Prediccion', x='Valores reales') +
+  geom_text(aes(label=Freq), color="white")
+conf_qda
+```
+
+La precisión del modelo cuadrático es ligeramente inferior al lineal. Sin embargo, esto no implica que el modelo sea intrínsecamente peor, ya que en realidad, requiere una menor cantidad de supuestos estadísticos. En este caso, dichos supuestos no se cumplen en el caso lineal ni en el cuadrático, por lo que no podrían hacerse inferencias sobre la calidad de los modelos.\
+
+## Máquinas de soporte vectorial (punto 3)
+
+En este apartado, se aplicó el algoritmo de máquinas de soporte vectorial para la clasificación supervisada de acuerdo a la variedad de vino. La idea de este algoritmo es encontrar un hiperplano de separación entre las clases, a partir del producto escalar de vectores multidimensionales. En este trabajo, se investigó la separación entre variedades y cómo se ve afectada por la elección del kernel, considerando kernels lineal, polinómico, radial y sigmoideo.\
+Por cuestiones de programación, se volvió a dividir el conjunto de datos en entrenamiento y prueba, y se escalaron nuevamente los valores. Se deja el código explicitado, aunque no se muestran los resultados.
+
+```{r maquinas de soporte remuestreo, message=FALSE, results='hide'}
+library(mlr)
+set.seed(857)
+
+library(rsample)
+set.seed(857)
+muestra_split <- initial_split(muestra, prop = 0.7, strata = variedad)
+
+muestra_train <- muestra_split %>%
+  training()
+
+muestra_test <- muestra_split %>%
+  testing()
+
+#escalado de conjunto de prueba
+muestra_train <- as.data.frame(muestra_train)
+for (k in 1:12){muestra_test[,k]=(muestra_test[,k]-mean(muestra_train[,k]))/sd(muestra_train[,k])}
+
+#escalado de conjunto de entrenamiento
+muestra_train[,-13] <- scale(muestra_train[,-13], center = TRUE, scale = TRUE)
+
+colnames(muestra_train) <- make.names(colnames(muestra_train),unique = T)
+colnames(muestra_test) <- make.names(colnames(muestra_test),unique = T)
+```
+
+Los resultados obtenidos con el kernel lineal se muestran a continuación. Nuevamente, no se muestran los resultados individuales de la predicción, pero se deja explicitado el código.
+
+```{r svm lineal, message=FALSE}
+library(e1071)
+x <- subset(muestra_train, select = -variedad)
+y <- muestra_train$variedad
+model_lineal <- svm(x, y, kernel="linear") 
+pred_lineal <- fitted(model_lineal)
+
+#matriz de confusión, predicción ingenua
+matriz_confusion_lineal_ingenua <- table(pred_lineal,y)
+matriz_confusion_lineal_ingenua%>% #código de formato de tabla
+  kbl()%>%
+  kable_styling()
+
+#predicción en conjunto prueba
+svm_lineal_test <- predict(model_lineal,muestra_test[-13])
+svm_lineal_test <- as.matrix(svm_lineal_test)
+
+#matriz de confusión, conjunto de prueba
+matriz_confusion_svm_lineal <- table(muestra_test$variedad, svm_lineal_test)
+#exactitud del modelo lineal
+accuracy_svm_lineal <- sum(diag(matriz_confusion_svm_lineal))/sum(matriz_confusion_svm_lineal)
+paste('Precisión SVM, kernel lineal: ', round(accuracy_svm_lineal,3))
+```
+
+Luego, se empleó un kernel polinómico de grado 3, a fin de comparar la precisión de la clasificación.
+
+```{r svm polinomico, message=FALSE}
+x <- subset(muestra_train, select = -variedad)
+y <- muestra_train$variedad
+model_polinomico <- svm(x, y, kernel="polynomial") 
+pred_polinomico <- fitted(model_polinomico)
+
+#matriz de confusion, predicción ingenua
+matriz_confusion_polinomico_ingenua <- table(pred_polinomico,y)
+matriz_confusion_polinomico_ingenua%>% #código de formato de tabla
+  kbl()%>%
+  kable_styling()
+
+#predicción en conjunto prueba
+svm_polin_test <- predict(model_polinomico,muestra_test[-13])
+svm_polin_test <- as.matrix(svm_polin_test)
+
+#matriz de confusión, conjunto de prueba
+matriz_confusion_svm_polin <- table(muestra_test$variedad, svm_polin_test)
+#exactitud del modelo polinómico
+accuracy_svm_polin <- sum(diag(matriz_confusion_svm_polin))/sum(matriz_confusion_svm_polin)
+paste('Precisión SVM, kernel polinómico:', round(accuracy_svm_polin,3))
+```
+
+El análisis se repitió, usando un kernel radial.
+
+```{r svm gaussiano, message=FALSE}
+x <- subset(muestra_train, select = -variedad)
+y <- muestra_train$variedad
+model_radial <- svm(x, y, kernel="radial") 
+pred_radial <- fitted(model_radial)
+
+#matriz de confusión, predicción ingenua
+matriz_confusion_radial_ingenua <- table(pred_radial,y)
+matriz_confusion_radial_ingenua%>% #código de formato de tabla
+  kbl()%>%
+  kable_styling()
+
+#predicciones en conjunto de prueba
+svm_radial_test <- predict(model_radial,muestra_test[-13])
+svm_radial_test <- as.matrix(svm_radial_test)
+
+#matriz de confusión, conjunto de prueba
+matriz_confusion_svm_radial <- table(muestra_test$variedad, svm_radial_test)
+#exactitud del modelo radial
+accuracy_svm_radial <- sum(diag(matriz_confusion_svm_radial))/sum(matriz_confusion_svm_radial)
+paste('Precisión SVM, kernel radial:', round(accuracy_svm_radial,3))
+```
+
+Finalmente, para concluir las comparaciones, se aplicó el modelo SVM con un kernel sigmoideo.
+
+```{r svm sigmoideo, message=FALSE}
+x <- subset(muestra_train, select = -variedad)
+y <- muestra_train$variedad
+model_sigm <- svm(x, y, kernel="sigmoid") 
+pred_sigm <- fitted(model_sigm)
+
+# matriz de confusión, predicción ingenua
+matriz_confusion_sigm_ingenua <- table(pred_sigm,y)
+matriz_confusion_sigm_ingenua%>% #código de formato de tabla
+  kbl()%>%
+  kable_styling()
+
+#predicción en conjunto de prueba
+svm_sigm_test <- predict(model_sigm,muestra_test[-13])
+svm_sigm_test <- as.matrix(svm_sigm_test)
+
+#matriz de confusión, conjunto de prueba
+matriz_confusion_svm_sigm <- table(muestra_test$variedad, svm_sigm_test)
+#exactitud del modelo sigmoideo
+accuracy_svm_sigm <- sum(diag(matriz_confusion_svm_sigm))/sum(matriz_confusion_svm_sigm)
+paste('Precisión SVM, kernel sigmoideo: ', round(accuracy_svm_sigm,3))
+```
+
+Se compararon las matrices de confusión en el conjunto de prueba para los cuatro kernels evaluados, graficándolas para facilitar su visualización.
+
+```{r heatmaps, message=FALSE, echo=FALSE, warning=FALSE}
+matriz_confusion_svm_lineal <- as.data.frame(matriz_confusion_svm_lineal)
+conf_lineal <- ggplot(data =  matriz_confusion_svm_lineal, aes(x=Var1, y=svm_lineal_test, fill=factor(Freq))) +
+  geom_tile() + theme_bw() + coord_equal() +
+  scale_fill_manual(values = c('#FF9966','#FF6666','#660000', '#CC6600')) +
+  guides(fill="none") + # removing legend for `fill`
+  labs(title = "Lineal", y='Prediccion', x='Valores reales') +
+  geom_text(aes(label=Freq), color="white") 
+
+matriz_confusion_svm_polin <- as.data.frame(matriz_confusion_svm_polin)
+conf_polin <- ggplot(data =  matriz_confusion_svm_polin, aes(x=Var1, y=svm_polin_test, fill=factor(Freq))) +
+  geom_tile() + theme_bw() + coord_equal() +
+  scale_fill_manual(values = c('#FF9966','#FF6666','#660000', '#CC6600')) +
+  guides(fill="none") + # removing legend for `fill`
+  labs(title = "Polinómico", y='Prediccion', x='Valores reales') +
+  geom_text(aes(label=Freq), color="white")
+
+matriz_confusion_svm_radial <- as.data.frame(matriz_confusion_svm_radial)
+conf_radial <- ggplot(data =  matriz_confusion_svm_radial, aes(x=Var1, y=svm_radial_test, fill=factor(Freq))) +
+  geom_tile() + theme_bw() + coord_equal() +
+  scale_fill_manual(values = c('#FF9966','#FF6666','#660000', '#CC6600')) +
+  guides(fill="none") + # removing legend for `fill`
+  labs(title = "Radial", y='Prediccion', x='Valores reales') +
+  geom_text(aes(label=Freq), color="white")
+
+matriz_confusion_svm_sigm <- as.data.frame(matriz_confusion_svm_sigm)
+conf_sigm <- ggplot(data =  matriz_confusion_svm_sigm, aes(x=Var1, y=svm_sigm_test, fill=factor(Freq))) +
+  geom_tile() + theme_bw() + coord_equal() +
+  scale_fill_manual(values = c('#FF9966','#FF6666','#660000', '#CC6600')) +
+  guides(fill="none") + # removing legend for `fill`
+  labs(title = "Sigmoideo", y='Prediccion', x='Valores reales') +
+  geom_text(aes(label=Freq), color="white")
+
+library(cowplot)
+plot_grid(conf_lineal, conf_polin, conf_radial, conf_sigm, ncol=2)
+```
+
+De acuerdo a los gráficos, se observó que la exactitud de la separación es similar para los kernels lineal, polinómico de orden 3 y radial. Por el contrario, la matriz de confusión en el caso sigmoideo exhibe numerosos errores. Esto sería un buen indicio para descartar ese kernel en particular. De los restantes, el lineal es el más sencillo, por lo que, a priori, sería una buena elección para la clasificación de observaciones en este conjunto de datos.
+
+## Métodos de clasificación jerárquicos (punto 4)
+
+Se aplicó un algoritmo jerárquico para la clasificación de los vinos según variedad. Como este modelo es computacionalmente muy costoso, se tomó un subconjunto de 100 vinos de la muestra original, respetando el balance entre blancos y tintos.
+
+```{r sumbuestra, message=FALSE}
+library(dplyr)
+set.seed(857)
+muestra_peq <- slice_sample(group_by(muestra, variedad),n = 50)
+table(muestra_peq$variedad) #chequeo que haya 50 y 50
+```
+
+Luego, previo a la aplicación del clustering jerárquico, se escalaron los valores del subconjunto.
+
+```{r escalar valores submuestra, message=FALSE}
+muestra_peq[,-13] <- scale(muestra_peq[,-13], center = TRUE, scale = TRUE)
+```
+
+Se aplicó el algoritmo de clasificación, considerando las distancias euclídeas entre los puntos para confeccionar la matriz de distancias. La distancia entre clusters se determinó utilizando diversos criterios, a fin de evaluar el impacto de esta decisión en el resultado final obtenido.
+
+```{r clustering jerarquico, message=FALSE}
+#matriz de distancias
+dist_mat <- dist(muestra_peq, method = 'euclidean')
+
+#clustering, distancia promedio
+hclust_avg <- hclust(dist_mat, method = 'average')
+
+#clustering, distancia al vecino más lejano
+hclust_complete <- hclust(dist_mat, method = 'complete')
+
+#clustering, distancia al vecino más próximo
+hclust_single <- hclust(dist_mat, method = 'single')
+
+#clustering, distancia ward
+hclust_ward <- hclust(dist_mat, method = 'ward.D2')
+```
+
+Los gráficos generados por cada uno de los algoritmos de clustering se muestran a continuación. Se muestran con líneas punteadas la división entre dos clusters.
+
+```{r dendograma , message=FALSE, echo=FALSE}
+library(dendextend)
+pch=c('#FF9966','#FF6666') 
+cols_avg=alpha(pch[muestra_peq$variedad[order.dendrogram(as.dendrogram(hclust_avg))]],0.7)
+dend_avg <- color_branches(as.dendrogram(hclust_avg), k = 2,col=c('#FF9966','#FF6666'))
+dend_avg <- set(dend_avg, "labels_cex", 0.1)
+grafico1 <- dend_avg %>%  set("leaves_pch",19)%>%
+        set("leaves_cex", .9) %>% set("leaves_col", cols_avg) %>% 
+        plot(main = "Distancia promedio", ylab='Distancia',cex.lab=1, cex.axis=.6)+
+        mtext(side = 1, line = 0.5, at = 1, adj = -4.1, 'Variedad')
+legend(5,28, title='Variedad', 
+     legend = c("Blanco" , "Tinto"), 
+     col = c('#FF9966','#FF6666') , 
+     pch = c(19,19), bty = "n",  pt.cex = 1.5, cex = 0.8 , 
+     text.col = "black", horiz = FALSE, inset = c(0, 0.1))
+dend_avg %>% rect.dendrogram(k=2, border = 8, lty = 2, lwd = 1)
+
+cols_complete=alpha(pch[muestra_peq$variedad[order.dendrogram(as.dendrogram(hclust_complete))]],0.7)
+dend_complete <- color_branches(as.dendrogram(hclust_complete), k = 2,col=c('#FF9966','#FF6666'))
+dend_complete <- set(dend_complete, "labels_cex", 0.1)
+grafico2 <- dend_complete %>%  set("leaves_pch",19)%>%
+        set("leaves_cex", .9) %>% set("leaves_col", cols_complete) %>% 
+        plot(main = "Distancia al más lejano", ylab='Distancia',cex.lab=1, cex.axis=.6)+
+        mtext(side = 1, line = 0.5, at = 1, adj = -4.1, 'Variedad')
+legend(5,28, title='Variedad', 
+     legend = c("Blanco" , "Tinto"), 
+     col = c('#FF9966','#FF6666') , 
+     pch = c(19,19), bty = "n",  pt.cex = 1.5, cex = 0.8 , 
+     text.col = "black", horiz = FALSE, inset = c(0, 0.1))
+dend_complete %>% rect.dendrogram(k=2, border = 8, lty = 2, lwd = 1)
+
+cols_single=alpha(pch[muestra_peq$variedad[order.dendrogram(as.dendrogram(hclust_single))]],0.7)
+dend_single <- color_branches(as.dendrogram(hclust_single), k = 2,col=c('#FF9966','#FF6666'))
+dend_single <- set(dend_single, "labels_cex", 0.1)
+grafico3 <- dend_single %>%  set("leaves_pch",19)%>%
+        set("leaves_cex", .9) %>% set("leaves_col", cols_single) %>% 
+        plot(main = "Distancia al más cercano", ylab='Distancia',cex.lab=1, cex.axis=.6)+
+        mtext(side = 1, line = 0.5, at = 1, adj = -4.1, 'Variedad')
+legend(5,28, title='Variedad', 
+     legend = c("Blanco" , "Tinto"), 
+     col = c('#FF9966','#FF6666') , 
+     pch = c(19,19), bty = "n",  pt.cex = 1.5, cex = 0.8 , 
+     text.col = "black", horiz = FALSE, inset = c(0, 0.1))
+dend_single %>% rect.dendrogram(k=2, border = 8, lty = 2, lwd = 1)
+
+cols_ward=alpha(pch[muestra_peq$variedad[order.dendrogram(as.dendrogram(hclust_ward))]],0.7)
+dend_ward <- color_branches(as.dendrogram(hclust_ward), k = 2,col=c('#FF9966','#FF6666'))
+dend_ward <- set(dend_ward, "labels_cex", 0.1)
+grafico4 <- dend_ward %>%  set("leaves_pch",19)%>%
+        set("leaves_cex", .9) %>% set("leaves_col", cols_ward) %>% 
+        plot(main = "Distancia de Ward", ylab='Distancia',cex.lab=1, cex.axis=.6)+
+        mtext(side = 1, line = 0.5, at = 1, adj = -4.1, 'Variedad')
+legend(5,28, title='Variedad', 
+     legend = c("Blanco" , "Tinto"), 
+     col = c('#FF9966','#FF6666') , 
+     pch = c(19,19), bty = "n",  pt.cex = 1.5, cex = 0.8 , 
+     text.col = "black", horiz = FALSE, inset = c(0, 0.1))
+dend_ward %>% rect.dendrogram(k=2, border = 8, lty = 2, lwd = 1)
+```
+
+A simple vista, puede detectarse que la distancia de Ward es la que produce clusters más equilibrados, y a su vez discrimina mejor los elementos. Los restantes criterios para determinar distancia entre clusters redundaron en grupos muy desequilibrados, con vinos de ambas variedades en cada uno. \
+A fin de verificar numéricamente la composición de cada cluster, primero se los explicitó utilizando el código que se describe a continuación. 
+
+```{r cant de elementos en cluster, message=FALSE}
+#formar clusters
+clusters_avg <- cutree(hclust_avg, k=2)
+clusters_complete <- cutree(hclust_complete, k=2)
+clusters_single <- cutree(hclust_single, k=2)
+clusters_ward <- cutree(hclust_ward, k=2)
+
+#agregar como columnas en muestra original
+muestra_peq$clusters_avg <- clusters_avg
+muestra_peq$clusters_complete <- clusters_complete
+muestra_peq$clusters_single <- clusters_single
+muestra_peq$clusters_ward <- clusters_ward
+```
+
+La composición del cluster con distancia promedio se muestra en la siguiente tabla.
+
+```{r tabla promedio, message=FALSE}
+#tabla de contingencias, distancia promedio
+tabla_avg <- table(muestra_peq$variedad, muestra_peq$clusters_avg, dnn = c("Variedad", "Cluster"))
+tabla_avg
+```
+Luego, se repitió el análisis considerando la distancia al vecino más lejano.
+
+```{r tabla complete, message=FALSE}
+#tabla de contingencias, distancia al más lejano
+tabla_complete <- table(muestra_peq$variedad, muestra_peq$clusters_complete, dnn = c("Variedad", "Cluster"))
+tabla_complete
+```
+El mismo tratamiento se aplicó para la distancia al vecino más cercano, y la distancia Ward.
+
+```{r tabla single, message=FALSE}
+#tabla de contingencias, distancia al más cercano
+tabla_single <- table(muestra_peq$variedad, muestra_peq$clusters_single, dnn = c("Variedad", "Cluster"))
+tabla_single
+
+#tabla de contingencias, distancia Ward
+tabla_ward <- table(muestra_peq$variedad, muestra_peq$clusters_ward, dnn = c("Variedad", "Cluster"))
+tabla_ward
+```
+
+Al igual que se pudo ver en los respectivos dendrogramas, considerando las distancias promedio, al vecino más cercano y al más lejano, existe en todos los casos un cluster muy pequeño, con elementos de una única clase, y otro más grande, que agrupa vinos de ambas variedades. Considerando que el objetivo del algoritmo es clasificar elementos, se pudo verificar que, en este caso particular, los parámetros anteriormente descritos no resultan útiles. Por el contrario, la distancia Ward arrojó clusters de tamaño similar, con separación óptima.\
+Se calculó además el coeficiente de correlación cofenético para cada conjunto de clusters obtenido.
+
+```{r cofenetico euclidea, message=FALSE}
+paste('Coeficiente cofenético, distancia promedio:' ,round(cor_cophenetic(dend_avg, dist_mat),3))
+paste('Coeficiente cofenético, distancia al vecino más lejano:' ,round(cor_cophenetic(dend_complete, dist_mat),3))
+paste('Coeficiente cofenético, distancia al vecino más cercano:' ,round(cor_cophenetic(dend_single, dist_mat),3))
+paste('Coeficiente cofenético, distancia de Ward:' ,round(cor_cophenetic(dend_ward, dist_mat),3))
+```
+
+Luego, se repitió el análisis considerando la distancia de Manhattan para el cálculo de la matriz de distancias, a fin de evaluar el impacto en la predicción.
+
+```{r clustering jerarquico manhattan, message=FALSE}
+#la misma muestra anterior, almacenada en otra variable
+library(dplyr)
+set.seed(857)
+muestra_peq_2 <- slice_sample(group_by(muestra, variedad),n = 50)
+muestra_peq_2[,-13] <- scale(muestra_peq_2[,-13], center = TRUE, scale = TRUE)
+
+#matriz de distancias
+dist_mat_manh <- dist(muestra_peq_2, method = 'manhattan')
+
+#clustering, distancia promedio
+hclust_avg_m <- hclust(dist_mat_manh, method = 'average')
+
+#clustering, distancia al vecino más lejano
+hclust_complete_m <- hclust(dist_mat_manh, method = 'complete')
+
+#clustering, distancia al vecino más próximo
+hclust_single_m <- hclust(dist_mat_manh, method = 'single')
+
+#clustering, distancia ward
+hclust_ward_m <- hclust(dist_mat_manh, method = 'ward.D2')
+```
+
+Los dendrogramas generados con estos nuevos parámetros se muestran a continuación.
+
+```{r dendograma  manhattan, message=FALSE, echo=FALSE}
+library(dendextend)
+pch=c('#FF9966','#FF6666') 
+cols_avg_m=alpha(pch[muestra_peq_2$variedad[order.dendrogram(as.dendrogram(hclust_avg_m))]],0.7)
+dend_avg_m <- color_branches(as.dendrogram(hclust_avg_m), k = 2,col=c('#FF9966','#FF6666'))
+dend_avg_m <- set(dend_avg_m, "labels_cex", 0.1)
+grafico1_m <- dend_avg_m %>%  set("leaves_pch",19)%>%
+        set("leaves_cex", .9) %>% set("leaves_col", cols_avg_m) %>% 
+        plot(main = "Distancia promedio", ylab='Distancia',cex.lab=1, cex.axis=.6)+
+        mtext(side = 1, line = 0.5, at = 1, adj = -4.1, 'Variedad')
+legend(5,28, title='Variedad', 
+     legend = c("Blanco" , "Tinto"), 
+     col = c('#FF9966','#FF6666') , 
+     pch = c(19,19), bty = "n",  pt.cex = 1.5, cex = 0.8 , 
+     text.col = "black", horiz = FALSE, inset = c(0, 0.1))
+dend_avg_m %>% rect.dendrogram(k=2, border = 8, lty = 2, lwd = 1)
+
+cols_complete_m=alpha(pch[muestra_peq_2$variedad[order.dendrogram(as.dendrogram(hclust_complete_m))]],0.7)
+dend_complete_m <- color_branches(as.dendrogram(hclust_complete_m), k = 2,col=c('#FF9966','#FF6666'))
+dend_complete_m <- set(dend_complete_m, "labels_cex", 0.1)
+grafico2_m <- dend_complete_m %>%  set("leaves_pch",19)%>%
+        set("leaves_cex", .9) %>% set("leaves_col", cols_complete_m) %>% 
+        plot(main = "Distancia al más lejano", ylab='Distancia',cex.lab=1, cex.axis=.6)+
+        mtext(side = 1, line = 0.5, at = 1, adj = -4.1, 'Variedad')
+legend(5,28, title='Variedad', 
+     legend = c("Blanco" , "Tinto"), 
+     col = c('#FF9966','#FF6666') , 
+     pch = c(19,19), bty = "n",  pt.cex = 1.5, cex = 0.8 , 
+     text.col = "black", horiz = FALSE, inset = c(0, 0.1))
+dend_complete_m %>% rect.dendrogram(k=2, border = 8, lty = 2, lwd = 1)
+
+cols_single_m=alpha(pch[muestra_peq_2$variedad[order.dendrogram(as.dendrogram(hclust_single_m))]],0.7)
+dend_single_m <- color_branches(as.dendrogram(hclust_single_m), k = 2,col=c('#FF9966','#FF6666'))
+dend_single_m <- set(dend_single_m, "labels_cex", 0.1)
+grafico3_m <- dend_single_m %>%  set("leaves_pch",19)%>%
+        set("leaves_cex", .9) %>% set("leaves_col", cols_single_m) %>% 
+        plot(main = "Distancia al más cercano", ylab='Distancia',cex.lab=1, cex.axis=.6)+
+        mtext(side = 1, line = 0.5, at = 1, adj = -4.1, 'Variedad')
+legend(5,28, title='Variedad', 
+     legend = c("Blanco" , "Tinto"), 
+     col = c('#FF9966','#FF6666') , 
+     pch = c(19,19), bty = "n",  pt.cex = 1.5, cex = 0.8 , 
+     text.col = "black", horiz = FALSE, inset = c(0, 0.1))
+dend_single_m %>% rect.dendrogram(k=2, border = 8, lty = 2, lwd = 1)
+
+cols_ward_m=alpha(pch[muestra_peq_2$variedad[order.dendrogram(as.dendrogram(hclust_ward_m))]],0.7)
+dend_ward_m <- color_branches(as.dendrogram(hclust_ward_m), k = 2,col=c('#FF9966','#FF6666'))
+dend_ward_m <- set(dend_ward_m, "labels_cex", 0.1)
+grafico4_m <- dend_ward_m %>%  set("leaves_pch",19)%>%
+        set("leaves_cex", .9) %>% set("leaves_col", cols_ward_m) %>% 
+        plot(main = "Distancia de Ward", ylab='Distancia',cex.lab=1, cex.axis=.6)+
+        mtext(side = 1, line = 0.5, at = 1, adj = -4.1, 'Variedad')
+legend(5,28, title='Variedad', 
+     legend = c("Blanco" , "Tinto"), 
+     col = c('#FF9966','#FF6666') , 
+     pch = c(19,19), bty = "n",  pt.cex = 1.5, cex = 0.8 , 
+     text.col = "black", horiz = FALSE, inset = c(0, 0.1))
+dend_ward_m %>% rect.dendrogram(k=2, border = 8, lty = 2, lwd = 1)
+```
+
+De acuerdo a los gráficos, se puede observar que la manera de calcular la matriz de distancias tuvo una fuerte influencia en los grupos obtenidos luego de la clasificación jerárquica. Este efecto es particularmente notorio para los casos de distancia promedio y distancia al vecino más cercano, donde la elección de la distancia de Manhattan posibilitó obtener clusters más homogéneos y de similar tamaño.\
+Los coeficientes de correlación cofenética se calcularon a continuación
+
+```{r cofenetico manhattan, message=FALSE}
+paste('Coeficiente cofenético, distancia promedio:' ,round(cor_cophenetic(dend_avg_m, dist_mat_manh),3))
+paste('Coeficiente cofenético, distancia al vecino más lejano:' ,round(cor_cophenetic(dend_complete_m, dist_mat_manh),3))
+paste('Coeficiente cofenético, distancia al vecino más cercano:' ,round(cor_cophenetic(dend_single_m, dist_mat_manh),3))
+paste('Coeficiente cofenético, distancia de Ward:' ,round(cor_cophenetic(dend_ward_m, dist_mat_manh),3))
+```
+Los coeficientes cofenéticos no se ven severamente afectados por la elección de la matriz de distancias.\
+Las tablas de contingencia para cada set de clusters obtenidos se detallan a continuación.
+
+```{r cant de elementos en cluster manhattan, message=FALSE}
+#formar clusters Manhattan
+clusters_avg_m <- cutree(hclust_avg_m, k=2)
+clusters_complete_m<- cutree(hclust_complete_m, k=2)
+clusters_single_m <- cutree(hclust_single_m, k=2)
+clusters_ward_m <- cutree(hclust_ward_m, k=2)
+
+#agregar como columnas en muestra original - Manhattan
+muestra_peq_2$clusters_avg_m <- clusters_avg_m
+muestra_peq_2$clusters_complete_m <- clusters_complete_m
+muestra_peq_2$clusters_single_m <- clusters_single_m
+muestra_peq_2$clusters_ward_m <- clusters_ward_m
+```
+```{r tabla promedio manhattan, message=FALSE}
+#tabla de contingencias, distancia promedio - Manhattan
+tabla_avg_m <- table(muestra_peq_2$variedad, muestra_peq_2$clusters_avg_m, dnn = c("Variedad", "Cluster"))
+tabla_avg_m
+
+#tabla de contingencias, distancia al más lejano - Manhattan
+tabla_complete_m <- table(muestra_peq_2$variedad, muestra_peq_2$clusters_complete_m, dnn = c("Variedad", "Cluster"))
+tabla_complete_m
+
+#tabla de contingencias, distancia al más cercano - Manhattan
+tabla_single_m <- table(muestra_peq_2$variedad, muestra_peq_2$clusters_single_m, dnn = c("Variedad", "Cluster"))
+tabla_single_m
+
+#tabla de contingencias, distancia Ward - Manhattan
+tabla_ward_m <- table(muestra_peq_2$variedad, muestra_peq_2$clusters_ward_m, dnn = c("Variedad", "Cluster"))
+tabla_ward_m
+```
+
+## k-medias (punto 5)
+
+Finalmente, se aplicó un algoritmo de clasificación no jerárquico, donde se define cuántos clusters se requieren, y se asignan los elementos a dichos clusters secuencialmente. Es importante destacar que _k-means_ es particularmente sensible a outliers. En el análisis exploratorio realizado al principio de este trabajo, se observaron varias distribuciones con colas pesadas, por lo que es esperable que el conjunto de datos contenga valores atípicos. En consecuencia, los grupos obtenidos mediante este método podrían no ser tan representativos.\
+A fin de determinar el número necesario de clusters para clasificar la información, se utilizó el método del codo y se calculó el coeficiente silhouette. Previamente, se escaló la muestra, a fin de evitar distorsiones producto de las distintas escalas de las variables.
+
+```{r codo kmeans, message=FALSE, echo=FALSE}
+muestra[,-13] <- scale(muestra[,-13], center = TRUE, scale = TRUE)
+
+set.seed(857)
+library(factoextra)
+fviz_nbclust(muestra, kmeans, method = "wss", barfill = '#FF9966',
+  barcolor = '#FF9966',
+  linecolor = '#FF9966') + xlab('Número de clusters') + ylab('WSS') + labs(title = 'Número de clusters - método del codo')
+
+fviz_nbclust(muestra, kmeans, method = "silhouette", barfill = '#FF6666',
+  barcolor = '#FF6666',
+  linecolor = '#FF6666') + xlab('Número de clusters') + ylab('Silhouette') + labs(title = 'Número de clusters - coeficiente Silhouette')
+```
+
+El coeficiente de silhouette es máximo para k = 5. Sin embargo, se puede ver gráficamente que también toma valores altos para k = 2 y k = 4. El conocimiento previo del conjunto de datos hace suponer que el número más razonable de clusters es 2, ya que se tienen dos variedades de vinos. El método del codo no es concluyente en este caso, ya que no se observa ningún quiebre marcado para algún k. Por lo tanto, se probaron los tres casos, a fin de ver cuál representaba mejor los datos reales.
+
+```{r kmeans, message=FALSE}
+#k-means, 2 clusters
+kmeans_2 <- kmeans(muestra, 2, nstart = 25)
+print(kmeans_2)
+
+#k-means, 4 clusters
+kmeans_4 <- kmeans(muestra, 4, nstart = 25)
+print(kmeans_4)
+
+#k-means, 5 clusters
+kmeans_5 <- kmeans(muestra, 5, nstart = 25)
+print(kmeans_5)
+```
+
+Los resultados de cada clasificación pueden visualizarse en los siguientes gráficos. Se incluyó también, para referencia, el gráfico de componentes principales con sus etiquetas reales.
+
+```{r kmeans graficos, message=FALSE, echo=FALSE}
+biplot
+muestra$variedad <- as.numeric(muestra$variedad)
+kmeans_2_grafico <- fviz_cluster(kmeans_2, data = muestra, geom = "point")+scale_fill_manual(values = c('#FF9966','#CC6666')) + scale_color_manual(values = c('#FF9966','#CC6666')) + theme_bw() + scale_shape_manual(values = c(16,16))
+kmeans_2_grafico
+kmeans_4_grafico <- fviz_cluster(kmeans_4, data = muestra, geom = "point") +scale_fill_manual(values =c('#FF9966','#CC6666','#660000', '#CC6600'))+ scale_color_manual(values = c('#FF9966','#CC6666','#660000', '#CC6600')) + theme_bw()+ scale_shape_manual(values = c(16,16,16,16))
+kmeans_4_grafico
+kmeans_5_grafico <- fviz_cluster(kmeans_5, data = muestra, geom = "point") +scale_fill_manual(values =c('#FF9966','#CC6666','#660000', '#CC6600', '#CC0000'))+ scale_color_manual(values = c('#FF9966','#CC6666','#660000', '#CC6600', '#CC0000')) + theme_bw() + scale_shape_manual(values = c(16,16,16,16,16))
+kmeans_5_grafico
+```
+
+Gráficamente, se puede apreciar que dividir los datos en dos clusters es una buena opción, aunque resulta en pérdida de información cerca de la frontera de separación. Esto es, la clasificación termina siendo muy rígida, y no permite que se mezclen los datos de ambos conjuntos. Este problema se resuelve parcialmente al considerar 4 o 5 clusters. La clasificación mejora y representa mejor los datos etiquetados. Probablemente, se podrían considerar únicamente 4 clusters, ya que se sabe que el cluster 5 y el 2 del gráfico con k = 5 corresponden a vinos identificados originalmente como tintos, y por lo tanto podrían combinarse. Sin embargo, esta es una conclusión a posteriori, que descansa en el conocimiento de la verdadera naturaleza de la muestra.\
+Se estudió la composición de cada cluster, para los distintos valores de k considerados. Los resultados se muestran a continuación.
+
+```{r composicion cluster kmeans, message=FALSE}
+#agregar información de cluster a la muestra 
+muestra$kmeans_2_cluster <- kmeans_2$cluster
+muestra$kmeans_4_cluster <- kmeans_4$cluster
+muestra$kmeans_5_cluster <- kmeans_5$cluster
+
+#composición del cluster, k=2
+table(muestra$kmeans_2_cluster,muestra$variedad,dnn=c('Cluster','Variedad'))
+
+#composición del cluster, k=4
+table(muestra$kmeans_4_cluster,muestra$variedad,dnn=c('Cluster','Variedad'))
+
+#composición del cluster, k=5
+table(muestra$kmeans_5_cluster,muestra$variedad,dnn=c('Cluster','Variedad'))
+```
+
+En general, los clusters obtenidos son relativamente homogéneos, aunque la separación no es óptima. Probablemente, los resultados mejorarían si se hiciera previamente una limpieza de valores atípicos, con algún criterio conveniente.
+
+## Conclusiones - Informe final
+
+En el presente trabajo, se analizó una base de datos de atributos de calidad de un conjunto de vinos provenientes de Portugal. Para ello, se tomó una muestra balanceada por variedad de vino.\
+\
+Primeramente, se realizó un análisis univariado del conjunto de datos. A simple vista, pueden detectarse severas desviaciones de la normalidad, tales como múltiples máximos locales y colas pesadas en las distribuciones. Esto último alerta de la presencia de valores atípicos en la muestra. Además, si las variables individuales no siguen una distribución normal, es poco probable que el conjunto de datos tenga una distribución normal multivariada. Por otra parte, los gráficos de variables de a pares muestran que, si bien existe algún par de variables que separe la población en vinos tintos y blancos, en general esta separación es insuficiente, ya que existe superposición de las categorías. Esto evidencia la necesidad de utilizar algoritmos de clasificación multivariados, más complejos, para lograr una buena separación de los subconjuntos de vinos.\
+\
+Luego, se realizó el análisis de componentes principales de la muestra. Esta técnica permite reducir la dimensionalidad de la muestra, al reemplazar las variables originales con combinaciones lineales de las mismas. Estas nuevas variables explican un porcentaje dado de la varianza del problema original. Con respecto a la muestra, se realizó el análisis previo escalado de las variables, para evitar que las que toman valores más grandes influenciaran desproporcionadamente los _loadings_ obtenidos. Se emplearon tres criterios distintos para determinar cuántas componentes principales debían retenerse: un límite arbitrario de porcentaje de varianza explicada, el criterio de Kaiser y el de bastón roto. En base a esta información, se decidieron retener las primeras cinco componentes principales, que explicaban aproximadamente un 80% de la varianza del problema. Es importante destacar que, en el caso del _scree plot_, la meseta no es muy marcada, pero se consideró que las componentes superiores no contribuían sensiblemente a explicar el problema. \
+\
+La correlación entre las variables originales y las nuevas componentes principales se determinó analizando los valores numéricos de _loadings_ y observando el correlograma. Es notable el comportamiento de las variables anhidrido sulfuroso libre y anhidrido sulfuroso total. Estas variables están fuertemente correlacionadas en todas las componentes principales consideradas. Esto tiene sentido, ya que en realidad tienen en cuenta a la misma especie química en entornos de pH distintos. Esta observación también está de acuerdo con lo graficado en el biplot, donde aparecen como dos vectores con un ángulo muy pequeño entre sí. El biplot también muestra la presencia de valores atípicos, como puntos de vinos tintos inmersos en la nube de vinos blancos, y puntos solitarios alejados de la nube principal. Esto haría suponer que, en realidad, debería optarse por una alternativa robusta para obtener las componentes principales.\
+\
+Para verificar esta última aseveración, se probó un método robusto, estimando la matriz de covarianzas de dos maneras diferentes: _minimum volume ellipsoid_ y _minimum covariance determinant_. Este tipo de análisis permitió retener un menor número de componentes principales representativas. Asimismo, el biplot permitió inferir nuevas relaciones entre variables, que no podían apreciarse con los métodos no robustos (por ejemplo, entre contenido de sulfatos y pH). Por ello, si bien el porcentaje de varianza explicado no aumentó sensiblemente, el uso de métodos robustos permitió un mejor entendimiento del problema. También es interesante remarcar que, si bien PCA no es un algoritmo de clasificación, en este caso se obtuvo una separación razonable entre vinos tintos y blancos, por lo que podría utilizarse como método de categorización preliminar para futuros elementos del conjunto de datos. \
+\
+Se aplicó posteriormente el método de análisis discriminante. El objetivo era encontrar una función que permitiera separar a las observaciones en dos conjuntos (tintos y blancos). Previo a la aplicación del método lineal, debieron corroborarse los supuestos de independencia, normalidad multivariada, homoscedasticidad y medias estadísticamente diferentes. De los supuestos, sólo puede verificarse el último (la independencia se asume válida por diseño). Por ello, si bien puede usarse el algoritmo, no puede afirmarse que los resultados obtenidos sean veraces. En particular, el modelo lineal exhibió un porcentaje de precisión muy alto, con pocos errores de tipo I y II, tal como se ve en la matriz de confusión. Dado que los supuestos necesarios no se cumplían, se decidió aplicar el método cuadrático, que independiza al análisis del requerimiento de homoscedasticidad. En esta situación, la precisión del modelo fue ligeramente menor para el conjunto de prueba, aunque también muy alta, y se detectaron más errores en la matriz de confusión. Sin embargo, no es posible comparar las virtudes de ambos modelos, ya que, en verdad, ninguno de los dos cumple con las condiciones requeridas para ser aplicado. En otro contexto, sería mejor optar por algoritmos de clasificación que no necesitaran supuestos estadísticos tan fuertes. \
+\
+Como alternativa al análisis discriminante, se aplicó el algoritmo de máquinas de soporte vectorial, que a priori no requiere realizar ningún supuesto sobre la muestra. El objetivo de este algoritmo es encontrar un hiperplano de separación entre los dos grupos, mapeando los puntos en un espacio de una dimensión mayor mediante un kernel. En particular, en este trabajo se comparó la precisión de la clasificación utilizando cuatro kernels distintos: lineal, polinómico de grado 3, radial y sigmoideo. La eficiencia de la clasificación fue pareja en casi todos, aunque empeoró notablemente al utilizar el kernel sigmoideo. Esto puede evidenciarse en las matrices de confusión, tanto para el conjunto de entrenamiento como para el de prueba. El kernel lineal produjo resultados aceptables, por lo que puede afirmarse que los conjuntos son linealmente separables. Si bien otros kernels arrojaron porcentajes de precisión similares, el costo computacional de utilizar un kernel más complejo es mayor, y aumenta con el número de observaciones en la muestra. Asimismo, al utilizar un modelo más sofisticado, el riesgo de overfitting es mayor. \
+\
+Finalmente, se aplicaron dos métodos de clasificación no supervisada a la muestra: clustering jerárquico y _k-means_. Ambos métodos implican calcular la distancia entre distintos puntos, para luego colapsar los más cercanos. Esta operación se repite hasta llegar a la cantidad de grupos especificada. En el caso del clustering jerárquico, se calculó la matriz de distancias considerando distancias euclideas y de Manhattan, a fin de comparar el efecto de esta elección en el agrupamiento final. Por cuestiones computacionales, se tomó una submuestra balanceada de 100 observaciones. Los dendrogramas se graficaron en ambos casos utilizando las distancias entre clusters promedio, al vecino más lejano (complete), al vecino más cercano (single) y de Ward. A simple vista, se puede observar que los clusters obtenidos utilizando la matriz de distancias de Manhattan son más parejos en tamaño y homogéneos que sus contrapartes obtenidos con distancias euclideas, excepto para _single linkage_. Esto puede deberse a que, en general, al aumentar el número de dimensiones del problema, la distancia euclidea podría no describir adecuadamente las relaciones entre los datos. Si bien en este caso elegir la distancia de Manhattan no es intuitivo, se observó que arroja resultados más consistentes con la realidad.\
+\
+Por último, se utilizó el algoritmo _k-means_. Este algoritmo es muy sensible a outliers, por lo que, en realidad, no sería óptima su aplicación en este contexto sin una previa limpieza de datos. A fin de determinar el número óptimo de clusters, se utilizó el criterio del codo y el coeficiente silhouette. En base a estos datos, se determinó que la mejor elección era separar las muestras en cinco clusters. Sin embargo, como 2 y 4 tenían valores de coeficiente silhouette similares, se verificó la separación con ellos también. \
+\
+En general, se puede apreciar que utilizar dos clusters describe razonablemente bien el conjunto, aunque se pierde información en la frontera de separación. Esta es muy rígida, y no permite que ambos conjuntos se mezclen, tal como se ve en los datos originales. Esta situación mejora razonablemente al incrementar el número de clusters, y además se obtienen clusters más homogéneos, tal como se evidencia en el parámetro _within sum of squares_. Sin embargo, en este caso, utilizar más clusters podría redundar en problemas de overfitting. Además, en el caso de k=5, el último cluster es pequeño y está totalmente contenido en el cluster 1 obtenido con k=4. Por lo tanto, incrementar el número de grupos no arrojaría información nueva en esta situación particular. Si bien k=2 no es la elección óptima según el estudio realizado previamente, en este caso, debido al conocimiento del dominio, termina siendo la que mejor describe los datos observados.
